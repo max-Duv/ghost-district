@@ -4,7 +4,16 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 from ghost_district import DistrictConfig, GhostDistrictSimulator
-from ghost_district.render import export_fields, export_report, export_summary, render_snapshots, render_timeline
+from ghost_district.render import (
+    export_dynamic_state,
+    export_fields,
+    export_report,
+    export_summary,
+    render_collection_layout,
+    render_sensor_timeline,
+    render_snapshots,
+    render_timeline,
+)
 
 
 def parse_args() -> ArgumentParser:
@@ -42,7 +51,10 @@ def main() -> None:
 
     summary_path = export_summary(summary, output_dir)
     field_path = export_fields(result, output_dir)
+    dynamic_paths = export_dynamic_state(result, output_dir)
     timeline_path = render_timeline(summary, output_dir)
+    collection_layout_path = render_collection_layout(result, summary, output_dir)
+    sensor_timeline_path = render_sensor_timeline(summary, output_dir)
     snapshot_hours = [hour for hour in args.snapshots if 0 <= hour <= 23]
     snapshot_paths = render_snapshots(result, snapshot_hours, output_dir)
     report_path = export_report(summary, output_dir)
@@ -50,7 +62,11 @@ def main() -> None:
     print(summary["title"])
     print(f"Summary: {summary_path}")
     print(f"Fields: {field_path}")
+    print(f"Trajectories: {dynamic_paths['trajectories']}")
+    print(f"Observations: {dynamic_paths['observations']}")
     print(f"Timeline: {timeline_path}")
+    print(f"Collection layout: {collection_layout_path}")
+    print(f"Sensor timeline: {sensor_timeline_path}")
     print(f"Report: {report_path}")
     if snapshot_paths:
         print("Snapshots:")

@@ -24,8 +24,32 @@ def export_fields(result: dict[str, Any], output_dir: Path) -> Path:
         total_energy=result["total_energy"],
         interference=result["interference"],
         gps_quality=result["gps_quality"],
+        sensor_coverage=result["sensor_coverage"],
     )
     return field_path
+
+
+def export_dynamic_state(result: dict[str, Any], output_dir: Path) -> dict[str, Path]:
+    trajectory_path = output_dir / "ghost_district_trajectories.json"
+    observation_path = output_dir / "ghost_district_sensor_observations.json"
+
+    with trajectory_path.open("w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "trajectories": result["trajectories"],
+                "sensor_tracks": result["sensor_tracks"],
+            },
+            handle,
+            indent=2,
+        )
+
+    with observation_path.open("w", encoding="utf-8") as handle:
+        json.dump(result["sensor_observations"], handle, indent=2)
+
+    return {
+        "trajectories": trajectory_path,
+        "observations": observation_path,
+    }
 
 
 def render_timeline(summary: dict[str, Any], output_dir: Path) -> Path:
@@ -98,6 +122,93 @@ def render_snapshots(result: dict[str, Any], hours: list[int], output_dir: Path)
     return image_paths
 
 
+def render_collection_layout(result: dict[str, Any], summary: dict[str, Any], output_dir: Path) -> Path:
+    coverage = np.max(result["sensor_coverage"], axis=0)
+    energy = result["total_energy"][18]
+    width_m = float(summary["config"]["width_m"])
+    height_m = float(summary["config"]["height_m"])
+    colors = {
+        "Apartment BLE": "#3b82f6",
+        "Delivery trackers": "#059669",
+        "Vehicle hotspots": "#dc2626",
+        "Interference": "#111827",
+    }
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    coverage_image = axes[0].imshow(coverage, origin="lower", cmap="cividis")
+    axes[0].set_title("Aggregate Sensor Coverage")
+    axes[0].set_xticks([])
+    axes[0].set_yticks([])
+    fig.colorbar(coverage_image, ax=axes[0], fraction=0.046, pad=0.04)
+
+    for sensor in summary["sensors"]:
+        track = result["sensor_tracks"][sensor["id"]]
+        xs = [point["x"] for point in track]
+        ys = [point["y"] for point in track]
+        x_scale = coverage.shape[1] - 1
+        y_scale = coverage.shape[0] - 1
+        plot_x = [x / width_m * x_scale for x in xs]
+        plot_y = [y / height_m * y_scale for y in ys]
+        if sensor["kind"] == "mobile":
+            axes[0].plot(plot_x, plot_y, color="white", linewidth=1.2, linestyle="--", alpha=0.9)
+        axes[0].scatter(plot_x[0], plot_y[0], color="white", edgecolor="black", s=60, zorder=5)
+        axes[0].text(plot_x[0] + 1.5, plot_y[0] + 1.5, sensor["label"], color="white", fontsize=8)
+
+    energy_image = axes[1].imshow(energy, origin="lower", cmap="magma")
+    axes[1].set_title("Agent Trajectories on Evening RF Field")
+    axes[1].set_xticks([])
+    axes[1].set_yticks([])
+    fig.colorbar(energy_image, ax=axes[1], fraction=0.046, pad=0.04)
+
+    for agent in summary["agents"]:
+        points = result["trajectories"][agent["id"]]
+        xs = [point["x"] / width_m * (energy.shape[1] - 1) for point in points if point["active"]]
+        ys = [point["y"] / height_m * (energy.shape[0] - 1) for point in points if point["active"]]
+        if not xs:
+            continue
+        axes[1].plot(xs, ys, linewidth=1.4, color=colors.get(agent["emitter_type"], "#f8fafc"), alpha=0.92)
+
+    for sensor in summary["sensors"]:
+        first = result["sensor_tracks"][sensor["id"]][0]
+        axes[1].scatter(
+            first["x"] / width_m * (energy.shape[1] - 1),
+            first["y"] / height_m * (energy.shape[0] - 1),
+            color="white",
+            edgecolor="black",
+            s=60,
+            zorder=6,
+        )
+
+    fig.tight_layout()
+    layout_path = output_dir / "collection_layout.png"
+    fig.savefig(layout_path, dpi=180)
+    plt.close(fig)
+    return layout_path
+
+
+def render_sensor_timeline(summary: dict[str, Any], output_dir: Path) -> Path:
+    hours = list(range(24))
+    fig, axis = plt.subplots(figsize=(12, 4.6))
+
+    for sensor in summary["sensors"]:
+        counts = summary["sensor_hourly_observations"][sensor["id"]]
+        axis.plot(hours, counts, linewidth=2.0, label=sensor["label"])
+
+    axis.set_title("Hourly Collection Volume by Sensor")
+    axis.set_xlabel("Hour")
+    axis.set_ylabel("Observation count")
+    axis.set_xticks(range(0, 24, 2))
+    axis.grid(alpha=0.25)
+    axis.legend(ncol=2)
+
+    fig.tight_layout()
+    timeline_path = output_dir / "sensor_observation_timeline.png"
+    fig.savefig(timeline_path, dpi=180)
+    plt.close(fig)
+    return timeline_path
+
+
 def export_report(summary: dict[str, Any], output_dir: Path) -> Path:
     lines = [
         "# Ghost District RF Personality Report",
@@ -123,6 +234,11 @@ def export_report(summary: dict[str, Any], output_dir: Path) -> Path:
             f"- `{entry['hour']:02d}:00` {entry['personality']} | dominant: {entry['dominant_emitter']} | GPS quality {entry['gps_quality_mean']:.2f}"
         )
         lines.append(f"  {entry['narrative']}")
+
+    lines.extend(["", "## Collection Layer", ""])
+    for sensor in summary["sensors"]:
+        total = summary["sensor_total_observations"][sensor["id"]]
+        lines.append(f"- `{sensor['label']}` ({sensor['kind']}) captured {total} observations")
 
     report_path = output_dir / "rf_personality_report.md"
     report_path.write_text("\n".join(lines), encoding="utf-8")
