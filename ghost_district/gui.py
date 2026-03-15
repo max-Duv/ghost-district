@@ -6,12 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -74,6 +77,28 @@ class CaptureWorker(QObject):
         self.event_emitted.emit(event)
 
 
+class MetricCard(QFrame):
+    def __init__(self, title: str, value: str, accent: str) -> None:
+        super().__init__()
+        self.setObjectName("MetricCard")
+        self.setProperty("accent", accent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(4)
+
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("MetricTitle")
+        self.value_label = QLabel(value)
+        self.value_label.setObjectName("MetricValue")
+        self.value_label.setWordWrap(True)
+
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.value_label)
+
+    def set_value(self, value: str) -> None:
+        self.value_label.setText(value)
+
+
 class GhostDistrictCaptureWindow(QMainWindow):
     def __init__(self, project_root: Path) -> None:
         super().__init__()
@@ -83,20 +108,29 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.worker_thread: QThread | None = None
         self.worker: CaptureWorker | None = None
         self.event_count = 0
+        self.latest_output_path = ""
 
         self.setWindowTitle("Ghost District OTA Capture Console")
-        self.resize(1220, 760)
+        self.resize(1360, 860)
+        self._apply_styles()
 
         self.backend_combo = QComboBox()
+        self.backend_combo.setMinimumWidth(260)
         for backend in self.backends:
             self.backend_combo.addItem(backend.display_name, backend.backend_id)
         self.backend_combo.currentIndexChanged.connect(self._refresh_backend_state)
 
-        self.status_label = QLabel("Idle")
-        self.status_label.setStyleSheet("font-weight: 600;")
+        self.status_badge = QLabel("Idle")
+        self.status_badge.setObjectName("StatusBadge")
+        self.status_badge.setProperty("state", "idle")
+        self.status_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self.start_button = QPushButton("Start Capture")
+        self.start_button.setObjectName("PrimaryButton")
         self.start_button.clicked.connect(self.start_capture)
+
         self.stop_button = QPushButton("Stop")
+        self.stop_button.setObjectName("SecondaryButton")
         self.stop_button.clicked.connect(self.stop_capture)
         self.stop_button.setEnabled(False)
 
@@ -133,20 +167,25 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.start_freq_spin = QDoubleSpinBox()
         self.start_freq_spin.setRange(1.0, 6000.0)
         self.start_freq_spin.setValue(2402.0)
+
         self.stop_freq_spin = QDoubleSpinBox()
         self.stop_freq_spin.setRange(1.0, 6000.0)
         self.stop_freq_spin.setValue(2480.0)
+
         self.step_freq_spin = QDoubleSpinBox()
         self.step_freq_spin.setRange(0.1, 1000.0)
         self.step_freq_spin.setValue(2.0)
+
         self.sample_rate_spin = QDoubleSpinBox()
         self.sample_rate_spin.setRange(100000.0, 10000000.0)
         self.sample_rate_spin.setDecimals(0)
         self.sample_rate_spin.setSingleStep(100000.0)
         self.sample_rate_spin.setValue(2400000.0)
+
         self.gain_spin = QDoubleSpinBox()
         self.gain_spin.setRange(0.0, 60.0)
         self.gain_spin.setValue(20.0)
+
         self.dwell_spin = QSpinBox()
         self.dwell_spin.setRange(50, 5000)
         self.dwell_spin.setValue(250)
@@ -157,65 +196,339 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.events_table.verticalHeader().setVisible(False)
         self.events_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.events_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.events_table.setAlternatingRowColors(True)
+        self.events_table.setShowGrid(False)
+        self.events_table.setObjectName("EventsTable")
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
+        self.log_view.setObjectName("LogView")
+        log_font = QFont("Consolas", 10)
+        self.log_view.setFont(log_font)
 
-        self.metrics_label = QLabel("Events: 0 | Backend: none")
+        self.hero_title = QLabel("OTA Capture Operations")
+        self.hero_title.setObjectName("HeroTitle")
+        self.hero_subtitle = QLabel(
+            "Run simulated or live collection sessions, save event logs, and produce analysis plots for BLE and RF capture."
+        )
+        self.hero_subtitle.setObjectName("HeroSubtitle")
+        self.hero_subtitle.setWordWrap(True)
+
+        self.backend_label = QLabel("")
+        self.backend_label.setObjectName("SectionTitle")
         self.description_label = QLabel("")
+        self.description_label.setObjectName("DescriptionText")
         self.description_label.setWordWrap(True)
-        self.description_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+
+        self.event_card = MetricCard("Captured Events", "0", "blue")
+        self.output_card = MetricCard("Output Bundle", "Pending", "orange")
+        self.backend_card = MetricCard("Active Backend", "None", "green")
 
         central = QWidget()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
-        root.addLayout(self._build_header())
-        root.addLayout(self._build_body())
+        root.setContentsMargins(22, 22, 22, 22)
+        root.setSpacing(16)
+        root.addWidget(self._build_hero())
+        root.addWidget(self._build_metrics())
+        root.addWidget(self._build_main_splitter(), 1)
 
         self._refresh_backend_state()
 
-    def _build_header(self) -> QHBoxLayout:
-        layout = QHBoxLayout()
-        layout.addWidget(QLabel("Backend"))
-        layout.addWidget(self.backend_combo, 1)
-        layout.addWidget(self.status_label, 1)
-        layout.addWidget(self.start_button)
-        layout.addWidget(self.stop_button)
-        return layout
+    def _apply_styles(self) -> None:
+        self.setStyleSheet(
+            """
+            QMainWindow, QWidget {
+                background: #f6f1e8;
+                color: #1f2933;
+                font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+                font-size: 11pt;
+            }
+            QFrame#HeroPanel, QFrame#Panel, QFrame#MetricCard {
+                background: #fffdf8;
+                border: 1px solid #e5d9c8;
+                border-radius: 18px;
+            }
+            QLabel#HeroTitle {
+                font-size: 24pt;
+                font-weight: 700;
+                color: #102a43;
+            }
+            QLabel#HeroSubtitle {
+                color: #486581;
+                font-size: 11.5pt;
+            }
+            QLabel#SectionTitle {
+                font-size: 14pt;
+                font-weight: 700;
+                color: #7c3e1d;
+            }
+            QLabel#DescriptionText {
+                color: #52606d;
+                line-height: 1.3;
+            }
+            QLabel#MetricTitle {
+                color: #7b8794;
+                font-size: 9.5pt;
+                font-weight: 600;
+                text-transform: uppercase;
+            }
+            QLabel#MetricValue {
+                color: #102a43;
+                font-size: 16pt;
+                font-weight: 700;
+            }
+            QFrame#MetricCard[accent="blue"] {
+                border-left: 6px solid #1471eb;
+            }
+            QFrame#MetricCard[accent="orange"] {
+                border-left: 6px solid #d97706;
+            }
+            QFrame#MetricCard[accent="green"] {
+                border-left: 6px solid #0f766e;
+            }
+            QLabel#StatusBadge {
+                padding: 8px 14px;
+                border-radius: 13px;
+                font-weight: 700;
+                min-width: 120px;
+            }
+            QLabel#StatusBadge[state="idle"] {
+                background: #e9eef5;
+                color: #334e68;
+            }
+            QLabel#StatusBadge[state="running"] {
+                background: #d9f2e6;
+                color: #0f5132;
+            }
+            QLabel#StatusBadge[state="stopping"] {
+                background: #fff1d6;
+                color: #8a4b08;
+            }
+            QLabel#StatusBadge[state="failed"] {
+                background: #fde4e1;
+                color: #9b1c1c;
+            }
+            QLabel#StatusBadge[state="complete"] {
+                background: #dff4ff;
+                color: #0c4a6e;
+            }
+            QPushButton {
+                border-radius: 12px;
+                padding: 10px 16px;
+                font-weight: 700;
+                border: 1px solid #d8c8b5;
+                background: #fff9f1;
+            }
+            QPushButton:hover {
+                background: #fdf2df;
+            }
+            QPushButton#PrimaryButton {
+                background: #c05621;
+                color: #fffdf9;
+                border: 1px solid #a34b1b;
+            }
+            QPushButton#PrimaryButton:hover {
+                background: #a34b1b;
+            }
+            QPushButton#SecondaryButton {
+                background: #fff3ed;
+                color: #8b2e10;
+                border: 1px solid #e8b7a3;
+            }
+            QPushButton:disabled {
+                background: #efe8df;
+                color: #9aa5b1;
+                border-color: #e0d6c8;
+            }
+            QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTableWidget {
+                background: #fffaf3;
+                border: 1px solid #dccfbe;
+                border-radius: 10px;
+                padding: 8px 10px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 26px;
+            }
+            QGroupBox {
+                color: #7c3e1d;
+                font-weight: 700;
+                border: 1px solid #e5d9c8;
+                border-radius: 16px;
+                margin-top: 14px;
+                padding-top: 14px;
+                background: #fffdf8;
+            }
+            QGroupBox::title {
+                left: 14px;
+                padding: 0 6px;
+            }
+            QTableWidget {
+                gridline-color: transparent;
+                selection-background-color: #f7dcc8;
+                selection-color: #102a43;
+                alternate-background-color: #fff6eb;
+            }
+            QHeaderView::section {
+                background: #f4eadf;
+                color: #5c4b3b;
+                border: none;
+                border-bottom: 1px solid #e4d5c3;
+                padding: 8px;
+                font-weight: 700;
+            }
+            QPlainTextEdit#LogView {
+                background: #fff7ee;
+                color: #3e4c59;
+            }
+            """
+        )
 
-    def _build_body(self) -> QHBoxLayout:
-        layout = QHBoxLayout()
+    def _build_hero(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("HeroPanel")
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(24, 22, 24, 22)
+        layout.setSpacing(20)
+
         left = QVBoxLayout()
-        left.addWidget(self._build_config_group())
-        left.addWidget(self._build_status_group())
+        left.setSpacing(6)
+        left.addWidget(self.hero_title)
+        left.addWidget(self.hero_subtitle)
 
         right = QVBoxLayout()
-        right.addWidget(self.events_table, 4)
-        right.addWidget(self.log_view, 2)
+        right.setSpacing(10)
+        right.addWidget(self._build_backend_picker())
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.status_badge)
+        button_row.addStretch(1)
+        button_row.addWidget(self.stop_button)
+        button_row.addWidget(self.start_button)
+        right.addLayout(button_row)
 
-        layout.addLayout(left, 2)
-        layout.addLayout(right, 3)
-        return layout
+        layout.addLayout(left, 3)
+        layout.addLayout(right, 2)
+        return panel
+
+    def _build_backend_picker(self) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        label = QLabel("Capture Backend")
+        label.setStyleSheet("font-weight: 700; color: #7c3e1d;")
+        layout.addWidget(label)
+        layout.addWidget(self.backend_combo, 1)
+        return widget
+
+    def _build_metrics(self) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+        layout.addWidget(self.event_card, 1)
+        layout.addWidget(self.output_card, 1)
+        layout.addWidget(self.backend_card, 1)
+        return widget
+
+    def _build_main_splitter(self) -> QSplitter:
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        left_panel = self._build_left_panel()
+        right_panel = self._build_right_panel()
+
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([420, 860])
+        return splitter
+
+    def _build_left_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("Panel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        backend_panel = QFrame()
+        backend_layout = QVBoxLayout(backend_panel)
+        backend_layout.setContentsMargins(0, 0, 0, 0)
+        backend_layout.setSpacing(6)
+        backend_layout.addWidget(self.backend_label)
+        backend_layout.addWidget(self.description_label)
+
+        layout.addWidget(backend_panel)
+        layout.addWidget(self._build_config_group())
+        layout.addWidget(self._build_status_group())
+        layout.addStretch(1)
+        return panel
+
+    def _build_right_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("Panel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        title = QLabel("Live Capture Feed")
+        title.setObjectName("SectionTitle")
+        layout.addWidget(title)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+
+        table_shell = QWidget()
+        table_layout = QVBoxLayout(table_shell)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(8)
+        table_label = QLabel("Observed Events")
+        table_label.setStyleSheet("font-weight: 700; color: #486581;")
+        table_layout.addWidget(table_label)
+        table_layout.addWidget(self.events_table)
+
+        log_shell = QWidget()
+        log_layout = QVBoxLayout(log_shell)
+        log_layout.setContentsMargins(0, 0, 0, 0)
+        log_layout.setSpacing(8)
+        log_label = QLabel("Operator Log")
+        log_label.setStyleSheet("font-weight: 700; color: #486581;")
+        log_layout.addWidget(log_label)
+        log_layout.addWidget(self.log_view)
+
+        splitter.addWidget(table_shell)
+        splitter.addWidget(log_shell)
+        splitter.setSizes([520, 210])
+        layout.addWidget(splitter, 1)
+        return panel
 
     def _build_config_group(self) -> QGroupBox:
         group = QGroupBox("Capture Configuration")
         layout = QFormLayout(group)
+        layout.setContentsMargins(16, 20, 16, 16)
+        layout.setSpacing(12)
 
         source_row = QWidget()
         source_layout = QHBoxLayout(source_row)
         source_layout.setContentsMargins(0, 0, 0, 0)
+        source_layout.setSpacing(8)
         source_layout.addWidget(self.source_path_edit)
         source_layout.addWidget(self.source_browse_button)
 
         output_row = QWidget()
         output_layout = QHBoxLayout(output_row)
         output_layout.setContentsMargins(0, 0, 0, 0)
+        output_layout.setSpacing(8)
         output_layout.addWidget(self.output_path_edit)
         output_layout.addWidget(self.output_browse_button)
 
         sdr_grid = QWidget()
         sdr_layout = QGridLayout(sdr_grid)
         sdr_layout.setContentsMargins(0, 0, 0, 0)
+        sdr_layout.setHorizontalSpacing(10)
+        sdr_layout.setVerticalSpacing(8)
         sdr_layout.addWidget(QLabel("Start MHz"), 0, 0)
         sdr_layout.addWidget(self.start_freq_spin, 0, 1)
         sdr_layout.addWidget(QLabel("Stop MHz"), 0, 2)
@@ -241,15 +554,26 @@ class GhostDistrictCaptureWindow(QMainWindow):
     def _build_status_group(self) -> QGroupBox:
         group = QGroupBox("Session State")
         layout = QVBoxLayout(group)
+        layout.setContentsMargins(16, 20, 16, 16)
+        layout.setSpacing(10)
+
+        self.metrics_label = QLabel("Events: 0")
+        self.metrics_label.setStyleSheet("font-weight: 700; color: #102a43;")
+        self.output_hint = QLabel("Plots and capture logs will be written when a session completes.")
+        self.output_hint.setWordWrap(True)
+        self.output_hint.setStyleSheet("color: #52606d;")
+
         layout.addWidget(self.metrics_label)
-        layout.addWidget(self.description_label)
+        layout.addWidget(self.output_hint)
         return group
 
     def _refresh_backend_state(self) -> None:
         backend = self._selected_backend()
         available, detail = backend.availability()
-        self.status_label.setText(detail)
+        self._set_status(detail, "idle")
+        self.backend_label.setText(backend.display_name)
         self.description_label.setText(backend.description)
+        self.backend_card.set_value(backend.display_name)
         self.start_button.setEnabled(available and self.worker_thread is None)
 
         is_replay = backend.backend_id in {"ghost_playback", "json_replay"}
@@ -298,7 +622,12 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.events_table.setRowCount(0)
         self.log_view.clear()
         self.event_count = 0
-        self.metrics_label.setText(f"Events: 0 | Backend: {backend.display_name}")
+        self.latest_output_path = config.output_path
+        self.metrics_label.setText("Events: 0")
+        self.event_card.set_value("0")
+        self.output_card.set_value("Writing pending")
+        self.backend_card.set_value(backend.display_name)
+        self.output_hint.setText("Session is active. Capture logs and plots will be generated on completion.")
 
         self.worker_thread = QThread(self)
         self.worker = CaptureWorker(backend, config)
@@ -315,12 +644,12 @@ class GhostDistrictCaptureWindow(QMainWindow):
 
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
-        self.status_label.setText("Capture running")
+        self._set_status("Capture running", "running")
 
     def stop_capture(self) -> None:
         if self.worker is not None:
             self.worker.request_stop()
-            self.status_label.setText("Stopping...")
+            self._set_status("Stopping capture", "stopping")
 
     def _append_event(self, event: dict[str, Any]) -> None:
         row = self.events_table.rowCount()
@@ -340,26 +669,35 @@ class GhostDistrictCaptureWindow(QMainWindow):
             self.events_table.setItem(row, column, item)
 
         self.event_count += 1
-        self.metrics_label.setText(f"Events: {self.event_count} | Backend: {self._selected_backend().display_name}")
+        self.metrics_label.setText(f"Events: {self.event_count}")
+        self.event_card.set_value(str(self.event_count))
         self.events_table.scrollToBottom()
 
     def _append_log(self, message: str) -> None:
         self.log_view.appendPlainText(message)
 
     def _capture_finished(self, result: dict[str, Any]) -> None:
-        self._append_log(f"Capture finished with {result.get('event_count', result.get('events', 0))} events")
+        event_total = result.get("event_count", result.get("events", 0))
+        self._append_log(f"Capture finished with {event_total} events")
         if result.get("output_path"):
             self._append_log(f"Saved capture log to {result['output_path']}")
-        for label, path in (result.get("plot_paths") or {}).items():
+            self.output_card.set_value(Path(result["output_path"]).name)
+        plot_paths = result.get("plot_paths") or {}
+        for label, path in plot_paths.items():
             self._append_log(f"Saved {label} plot to {path}")
-        self.status_label.setText("Capture complete")
+        if plot_paths:
+            self.output_hint.setText(f"Generated {len(plot_paths)} plots alongside the saved capture log.")
+        else:
+            self.output_hint.setText("Capture completed without additional plot outputs.")
+        self._set_status("Capture complete", "complete")
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
 
     def _capture_failed(self, message: str) -> None:
-        self.status_label.setText("Capture failed")
+        self._set_status("Capture failed", "failed")
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
+        self.output_hint.setText("The session ended with an error before outputs were finalized.")
         QMessageBox.critical(self, "Capture Failed", message)
         self._append_log(f"ERROR: {message}")
 
@@ -372,6 +710,12 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.worker = None
         self._refresh_backend_state()
 
+    def _set_status(self, text: str, state: str) -> None:
+        self.status_badge.setText(text)
+        self.status_badge.setProperty("state", state)
+        self.status_badge.style().unpolish(self.status_badge)
+        self.status_badge.style().polish(self.status_badge)
+
     def _choose_source_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select Replay File", self.source_path_edit.text(), "JSON Files (*.json)")
         if path:
@@ -381,6 +725,7 @@ class GhostDistrictCaptureWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Capture Log Output", self.output_path_edit.text(), "JSON Files (*.json)")
         if path:
             self.output_path_edit.setText(path)
+            self.output_card.set_value(Path(path).name)
 
 
 def launch_capture_gui(project_root: Path) -> int:
