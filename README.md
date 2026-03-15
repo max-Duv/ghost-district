@@ -25,6 +25,7 @@ The generated district can support:
 
 - `run_ghost_district.py`: command-line entry point
 - `launch_capture_gui.py`: PyQt6 OTA capture console
+  - includes a mission dashboard tab for reviewing placement, route, emitter, window, and interference outputs
 - `ghost_district/model.py`: district geometry, actors, temporal behavior, and RF synthesis
 - `ghost_district/capture.py`: OTA capture backends and event logging
 - `ghost_district/capture_render.py`: OTA capture plot generation
@@ -54,6 +55,18 @@ Launch the capture GUI:
 ```bash
 python launch_capture_gui.py
 ```
+
+Typical combined workflow:
+
+```bash
+python run_ghost_district.py --weather rain --density 1.15 --seed 41 --snapshots 7 12 18 22
+python launch_capture_gui.py
+```
+
+The GUI now has two primary views:
+
+- `Capture`: live/replay OTA collection, waveform monitoring, event feed, and capture plot generation
+- `Mission`: collector rankings, route tradeoffs, emitter assessment, collection windows, interference actions, and embedded mission plots loaded from `outputs/`
 
 ## Outputs
 
@@ -101,6 +114,14 @@ The live GUI also includes a mode-aware waveform panel:
 - `BLE Adapter`: live BLE RSSI waveform
 - `RTL-SDR Sweep`: live frequency-power sweep profile
 - `JSON Replay`: scrolling replay signal envelope
+
+The `Mission` tab reads:
+
+- `outputs/mission_logic_summary.json`
+- `outputs/mission_collector_placements.png`
+- `outputs/mission_route_tradeoff.png`
+- `outputs/mission_state_timeline.png`
+- `outputs/mission_interference_actions.png`
 
 ## Model Notes
 

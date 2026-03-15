@@ -27,8 +27,10 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -101,6 +103,367 @@ class MetricCard(QFrame):
 
     def set_value(self, value: str) -> None:
         self.value_label.setText(value)
+
+
+class PlotImageLabel(QLabel):
+    def __init__(self) -> None:
+        super().__init__()
+        self._pixmap: QPixmap | None = None
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumHeight(200)
+        self.setWordWrap(True)
+        self.setStyleSheet("color: #8f9ad0; padding: 20px;")
+
+    def set_plot(self, path: Path | None) -> None:
+        if path is None or not path.exists():
+            self._pixmap = None
+            self.setText("Plot not available for the selected mission output.")
+            self.setPixmap(QPixmap())
+            return
+
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            self._pixmap = None
+            self.setText(f"Unable to load plot: {path.name}")
+            self.setPixmap(QPixmap())
+            return
+
+        self._pixmap = pixmap
+        self._refresh_pixmap()
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        self._refresh_pixmap()
+
+    def _refresh_pixmap(self) -> None:
+        if self._pixmap is None:
+            return
+        scaled = self._pixmap.scaled(
+            max(1, self.width() - 16),
+            max(1, self.height() - 16),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.setPixmap(scaled)
+
+
+class MissionPlotCard(QFrame):
+    def __init__(self, title: str) -> None:
+        super().__init__()
+        self.setObjectName("Panel")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+
+        label = QLabel(title)
+        label.setStyleSheet("font-weight: 700; color: #cfd7ff;")
+        self.image_label = PlotImageLabel()
+
+        layout.addWidget(label)
+        layout.addWidget(self.image_label, 1)
+
+    def set_plot(self, path: Path | None) -> None:
+        self.image_label.set_plot(path)
+
+
+class MissionDashboard(QFrame):
+    def __init__(self, project_root: Path) -> None:
+        super().__init__()
+        self.project_root = project_root
+        self.output_dir = project_root / "outputs"
+
+        self.summary_path_edit = QLineEdit(str(self.output_dir / "mission_logic_summary.json"))
+        self.summary_browse_button = QPushButton("Browse")
+        self.summary_browse_button.clicked.connect(self._choose_summary_file)
+        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button.clicked.connect(self.refresh_from_disk)
+
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("DescriptionText")
+        self.status_label.setWordWrap(True)
+
+        self.best_placement_card = MetricCard("Best Placement", "No mission data", "blue")
+        self.best_route_card = MetricCard("Best Route", "No mission data", "orange")
+        self.top_emitter_card = MetricCard("Top Emitter", "No mission data", "green")
+        self.top_window_card = MetricCard("Best Window", "No mission data", "blue")
+
+        self.placements_table = self._build_table(["Placement", "Score", "Opportunity", "Exposure"], [230, 90, 100, 90])
+        self.routes_table = self._build_table(["Route", "Score", "Opportunity", "Exposure"], [230, 90, 100, 90])
+        self.emitters_table = self._build_table(["Emitter", "Relevance", "Ambiguity", "Tags"], [190, 90, 90, 220])
+        self.windows_table = self._build_table(["Hour", "State", "Window", "Route"], [70, 140, 90, 220])
+        self.actions_table = self._build_table(["Action", "Impact", "Affected"], [230, 90, 90])
+
+        self.placements_plot = MissionPlotCard("Collector Placements")
+        self.routes_plot = MissionPlotCard("Route Tradeoff")
+        self.states_plot = MissionPlotCard("Mission State Timeline")
+        self.actions_plot = MissionPlotCard("Interference Actions")
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setObjectName("MissionScrollArea")
+
+        content = QWidget()
+        scroll.setWidget(content)
+
+        root = QVBoxLayout(content)
+        root.setContentsMargins(4, 4, 4, 4)
+        root.setSpacing(14)
+        root.addWidget(self._build_controls())
+        root.addWidget(self._build_cards())
+        root.addWidget(self._build_tables())
+        root.addWidget(self._build_plots())
+        root.addStretch(1)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(scroll)
+
+        self.refresh_from_disk()
+
+    def _build_controls(self) -> QGroupBox:
+        group = QGroupBox("Mission Output")
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(16, 20, 16, 16)
+        layout.setSpacing(10)
+
+        file_row = QWidget()
+        file_layout = QHBoxLayout(file_row)
+        file_layout.setContentsMargins(0, 0, 0, 0)
+        file_layout.setSpacing(8)
+        file_layout.addWidget(self.summary_path_edit, 1)
+        file_layout.addWidget(self.summary_browse_button)
+        file_layout.addWidget(self.refresh_button)
+
+        hint = QLabel(
+            "Load the latest mission outputs generated by run_ghost_district.py. This dashboard reads the mission summary JSON and companion plots from outputs/."
+        )
+        hint.setObjectName("DescriptionText")
+        hint.setWordWrap(True)
+
+        layout.addWidget(file_row)
+        layout.addWidget(hint)
+        layout.addWidget(self.status_label)
+        return group
+
+    def _build_cards(self) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        layout.addWidget(self.best_placement_card, 1)
+        layout.addWidget(self.best_route_card, 1)
+        layout.addWidget(self.top_emitter_card, 1)
+        layout.addWidget(self.top_window_card, 1)
+        return widget
+
+    def _build_tables(self) -> QWidget:
+        widget = QWidget()
+        layout = QGridLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        layout.addWidget(self._wrap_table("Placement Rankings", self.placements_table), 0, 0)
+        layout.addWidget(self._wrap_table("Route Tradeoffs", self.routes_table), 0, 1)
+        layout.addWidget(self._wrap_table("Emitter Assessment", self.emitters_table), 1, 0)
+        layout.addWidget(self._wrap_table("Collection Windows", self.windows_table), 1, 1)
+        layout.addWidget(self._wrap_table("Interference Actions", self.actions_table), 2, 0, 1, 2)
+        return widget
+
+    def _build_plots(self) -> QWidget:
+        widget = QWidget()
+        layout = QGridLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        layout.addWidget(self.placements_plot, 0, 0)
+        layout.addWidget(self.routes_plot, 0, 1)
+        layout.addWidget(self.states_plot, 1, 0)
+        layout.addWidget(self.actions_plot, 1, 1)
+        return widget
+
+    def _build_table(self, headers: list[str], widths: list[int]) -> QTableWidget:
+        table = QTableWidget(0, len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.setShowGrid(False)
+        table.setObjectName("EventsTable")
+        for index, width in enumerate(widths[:-1]):
+            table.setColumnWidth(index, width)
+        return table
+
+    def _wrap_table(self, title: str, table: QTableWidget) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("Panel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+        label = QLabel(title)
+        label.setStyleSheet("font-weight: 700; color: #cfd7ff;")
+        layout.addWidget(label)
+        layout.addWidget(table, 1)
+        return panel
+
+    def refresh_from_disk(self) -> None:
+        summary_path = Path(self.summary_path_edit.text().strip())
+        if not summary_path.exists():
+            self._set_empty_state(
+                f"Mission summary not found at {summary_path}. Run run_ghost_district.py first, or browse to an existing mission_logic_summary.json file."
+            )
+            return
+
+        try:
+            mission_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self._set_empty_state(f"Unable to read mission summary: {exc}")
+            return
+
+        self._populate_cards(mission_summary)
+        self._populate_tables(mission_summary)
+        output_dir = summary_path.parent
+        self.placements_plot.set_plot(output_dir / "mission_collector_placements.png")
+        self.routes_plot.set_plot(output_dir / "mission_route_tradeoff.png")
+        self.states_plot.set_plot(output_dir / "mission_state_timeline.png")
+        self.actions_plot.set_plot(output_dir / "mission_interference_actions.png")
+        self.status_label.setText(f"Loaded mission outputs from {output_dir}")
+
+    def _populate_cards(self, mission_summary: dict[str, Any]) -> None:
+        placements = mission_summary.get("collector_placements", [])
+        routes = mission_summary.get("route_assessment", [])
+        emitters = mission_summary.get("emitter_assessment", [])
+        windows = mission_summary.get("collection_windows", [])
+
+        if placements:
+            top = placements[0]
+            self.best_placement_card.set_value(f"{top['label']}\nScore {top['placement_score']:.2f}")
+        else:
+            self.best_placement_card.set_value("No placement data")
+
+        if routes:
+            top = routes[0]
+            self.best_route_card.set_value(f"{top['label']}\nScore {top['route_score']:.2f}")
+        else:
+            self.best_route_card.set_value("No route data")
+
+        if emitters:
+            top = emitters[0]
+            tags = ", ".join(top.get("tags", []))
+            self.top_emitter_card.set_value(f"{top['label']}\n{tags}")
+        else:
+            self.top_emitter_card.set_value("No emitter data")
+
+        if windows:
+            top = windows[0]
+            self.top_window_card.set_value(f"{top['hour']:02d}:00 {top['state']}\nScore {top['window_score']:.2f}")
+        else:
+            self.top_window_card.set_value("No window data")
+
+    def _populate_tables(self, mission_summary: dict[str, Any]) -> None:
+        self._fill_table(
+            self.placements_table,
+            [
+                [
+                    item["label"],
+                    f"{item['placement_score']:.2f}",
+                    f"{item['collection_opportunity']:.2f}",
+                    f"{item['exposure']:.2f}",
+                ]
+                for item in mission_summary.get("collector_placements", [])[:6]
+            ],
+            numeric_columns={1, 2, 3},
+        )
+        self._fill_table(
+            self.routes_table,
+            [
+                [
+                    item["label"],
+                    f"{item['route_score']:.2f}",
+                    f"{item['collection_opportunity']:.2f}",
+                    f"{item['exposure']:.2f}",
+                ]
+                for item in mission_summary.get("route_assessment", [])[:6]
+            ],
+            numeric_columns={1, 2, 3},
+        )
+        self._fill_table(
+            self.emitters_table,
+            [
+                [
+                    item["label"],
+                    f"{item['mission_relevance']:.2f}",
+                    f"{item['ambiguity']:.2f}",
+                    ", ".join(item.get("tags", [])),
+                ]
+                for item in mission_summary.get("emitter_assessment", [])[:6]
+            ],
+            numeric_columns={1, 2},
+        )
+        self._fill_table(
+            self.windows_table,
+            [
+                [
+                    f"{item['hour']:02d}:00",
+                    item["state"],
+                    f"{item['window_score']:.2f}",
+                    item["preferred_route"],
+                ]
+                for item in mission_summary.get("collection_windows", [])[:6]
+            ],
+            numeric_columns={2},
+        )
+        self._fill_table(
+            self.actions_table,
+            [
+                [
+                    item["label"],
+                    f"{item['impact_score']:.2f}",
+                    str(item["affected_observations"]),
+                ]
+                for item in mission_summary.get("interference_actions", [])[:6]
+            ],
+            numeric_columns={1, 2},
+        )
+
+    def _fill_table(self, table: QTableWidget, rows: list[list[str]], numeric_columns: set[int]) -> None:
+        table.setRowCount(0)
+        for row_index, row_values in enumerate(rows):
+            table.insertRow(row_index)
+            for column, value in enumerate(row_values):
+                item = QTableWidgetItem(value)
+                if column in numeric_columns:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                table.setItem(row_index, column, item)
+
+    def _set_empty_state(self, message: str) -> None:
+        self.best_placement_card.set_value("No mission data")
+        self.best_route_card.set_value("No mission data")
+        self.top_emitter_card.set_value("No mission data")
+        self.top_window_card.set_value("No mission data")
+        for table in [
+            self.placements_table,
+            self.routes_table,
+            self.emitters_table,
+            self.windows_table,
+            self.actions_table,
+        ]:
+            table.setRowCount(0)
+        for plot in [self.placements_plot, self.routes_plot, self.states_plot, self.actions_plot]:
+            plot.set_plot(None)
+        self.status_label.setText(message)
+
+    def _choose_summary_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Mission Summary",
+            self.summary_path_edit.text(),
+            "Mission JSON (*.json)",
+        )
+        if path:
+            self.summary_path_edit.setText(path)
+            self.refresh_from_disk()
 
 
 class NebulaBackground(QWidget):
@@ -350,7 +713,7 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.event_count = 0
         self.latest_output_path = ""
 
-        self.setWindowTitle("Ghost District OTA Capture Console")
+        self.setWindowTitle("Ghost District Operations Console")
         self.resize(1360, 860)
         self._apply_styles()
 
@@ -446,10 +809,10 @@ class GhostDistrictCaptureWindow(QMainWindow):
         log_font = QFont("Consolas", 10)
         self.log_view.setFont(log_font)
 
-        self.hero_title = QLabel("OTA Capture Operations")
+        self.hero_title = QLabel("Ghost District Operations")
         self.hero_title.setObjectName("HeroTitle")
         self.hero_subtitle = QLabel(
-            "Run simulated or live collection sessions, save event logs, and produce analysis plots for BLE and RF capture."
+            "Run live or replayed RF collection sessions, then review mission placements, routes, state shifts, and interference leverage in the same console."
         )
         self.hero_subtitle.setObjectName("HeroSubtitle")
         self.hero_subtitle.setWordWrap(True)
@@ -460,6 +823,9 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.description_label.setObjectName("DescriptionText")
         self.description_label.setWordWrap(True)
         self.waveform_panel = LiveWaveformPanel()
+        self.mission_dashboard = MissionDashboard(project_root)
+        self.right_tabs = QTabWidget()
+        self.right_tabs.currentChanged.connect(self._handle_tab_change)
 
         self.event_card = MetricCard("Captured Events", "0", "blue")
         self.output_card = MetricCard("Output Bundle", "Pending", "orange")
@@ -633,6 +999,32 @@ class GhostDistrictCaptureWindow(QMainWindow):
                 background: rgba(8, 13, 33, 232);
                 color: #d6dcff;
             }
+            QTabWidget::pane {
+                border: 1px solid rgba(94, 103, 171, 90);
+                border-radius: 16px;
+                background: rgba(8, 13, 33, 168);
+                top: -1px;
+            }
+            QTabBar::tab {
+                background: rgba(13, 20, 49, 220);
+                color: #aeb8eb;
+                border: 1px solid rgba(94, 103, 171, 80);
+                border-bottom: none;
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+                padding: 10px 18px;
+                margin-right: 4px;
+                min-width: 120px;
+                font-weight: 700;
+            }
+            QTabBar::tab:selected {
+                background: rgba(19, 28, 66, 245);
+                color: #f4f5ff;
+            }
+            QScrollArea#MissionScrollArea {
+                border: none;
+                background: transparent;
+            }
             """
         )
 
@@ -724,6 +1116,17 @@ class GhostDistrictCaptureWindow(QMainWindow):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
 
+        self.right_tabs.addTab(self._build_capture_tab(), "Capture")
+        self.right_tabs.addTab(self._build_mission_tab(), "Mission")
+        layout.addWidget(self.right_tabs, 1)
+        return panel
+
+    def _build_capture_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
         title = QLabel("Live Capture Feed")
         title.setObjectName("SectionTitle")
         layout.addWidget(title)
@@ -760,7 +1163,26 @@ class GhostDistrictCaptureWindow(QMainWindow):
         splitter.addWidget(log_shell)
         splitter.setSizes([260, 360, 170])
         layout.addWidget(splitter, 1)
-        return panel
+        return widget
+
+    def _build_mission_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        title = QLabel("Mission Logic Dashboard")
+        title.setObjectName("SectionTitle")
+        subtitle = QLabel(
+            "Review collector placements, route exposure tradeoffs, emitter ambiguity, collection windows, and high-impact interference actions from the latest district run."
+        )
+        subtitle.setObjectName("DescriptionText")
+        subtitle.setWordWrap(True)
+
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addWidget(self.mission_dashboard, 1)
+        return widget
 
     def _build_config_group(self) -> QGroupBox:
         group = QGroupBox("Capture Configuration")
@@ -987,6 +1409,10 @@ class GhostDistrictCaptureWindow(QMainWindow):
         if path:
             self.output_path_edit.setText(path)
             self.output_card.set_value(Path(path).name)
+
+    def _handle_tab_change(self, index: int) -> None:
+        if self.right_tabs.tabText(index) == "Mission":
+            self.mission_dashboard.refresh_from_disk()
 
 
 def launch_capture_gui(project_root: Path) -> int:
