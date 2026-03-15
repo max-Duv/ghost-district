@@ -87,6 +87,13 @@ Saved OTA sessions automatically render:
 - `ble_analysis.png`: BLE RSSI scatter and top service UUIDs, when BLE traffic is present
 - `rf_sweep_heatmap.png`: time-frequency power map, when SDR sweep data is present
 
+The live GUI also includes a mode-aware waveform panel:
+
+- `Ghost District Playback`: scrolling simulated collection envelope
+- `BLE Adapter`: live BLE RSSI waveform
+- `RTL-SDR Sweep`: live frequency-power sweep profile
+- `JSON Replay`: scrolling replay signal envelope
+
 ## Model Notes
 
 The simulator uses a synthetic city block with residential towers, storefront corridors, road traffic lanes, and urban canyon GPS degradation bands. Hourly activity is driven by actor routines, weather assumptions, density scaling, and seeded randomness so the environment is repeatable but still behavior-rich.

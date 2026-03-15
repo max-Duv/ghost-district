@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import asdict
 import json
 from pathlib import Path
 from typing import Any
 
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.figure import Figure
+import numpy as np
 from PySide6.QtCore import QObject, QThread, Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -97,6 +101,192 @@ class MetricCard(QFrame):
 
     def set_value(self, value: str) -> None:
         self.value_label.setText(value)
+
+
+class LiveWaveformPanel(QFrame):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("Panel")
+
+        self.backend_id = "ghost_playback"
+        self.sample_index = 0
+        self.history_x: deque[int] = deque(maxlen=180)
+        self.history_y: deque[float] = deque(maxlen=180)
+        self.sweep_points: dict[float, float] = {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        self.title_label = QLabel("Live Waveform")
+        self.title_label.setStyleSheet("font-weight: 700; color: #486581;")
+        self.subtitle_label = QLabel("")
+        self.subtitle_label.setStyleSheet("color: #7b8794;")
+        self.subtitle_label.setWordWrap(True)
+
+        self.figure = Figure(figsize=(6, 3.1), facecolor="#fffdf8")
+        self.canvas = FigureCanvasQTAgg(self.figure)
+        self.canvas.setStyleSheet("background: transparent;")
+        self.axis = self.figure.add_subplot(111)
+        self.figure.subplots_adjust(left=0.10, right=0.98, top=0.88, bottom=0.20)
+
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.subtitle_label)
+        layout.addWidget(self.canvas, 1)
+
+        self.set_backend("ghost_playback")
+
+    def set_backend(self, backend_id: str) -> None:
+        self.backend_id = backend_id
+        self.reset()
+        self._render_idle()
+
+    def reset(self) -> None:
+        self.sample_index = 0
+        self.history_x.clear()
+        self.history_y.clear()
+        self.sweep_points.clear()
+
+    def ingest_event(self, event: dict[str, Any]) -> None:
+        self.sample_index += 1
+        if self.backend_id == "rtl_sdr":
+            frequency = _parse_frequency_mhz(event.get("channel"))
+            power = _event_strength(event)
+            if frequency is not None and power is not None:
+                self.sweep_points[frequency] = power
+                self._render_sdr()
+            return
+
+        amplitude = _event_strength(event)
+        if amplitude is None:
+            amplitude = -92.0 + 4.0 * np.sin(self.sample_index / 6.0)
+        self.history_x.append(self.sample_index)
+        self.history_y.append(float(amplitude))
+        self._render_series()
+
+    def _render_idle(self) -> None:
+        self.axis.clear()
+        self.axis.set_facecolor("#fffaf3")
+        self.axis.grid(alpha=0.20, color="#d9c5ac")
+        self.axis.tick_params(colors="#6b7280", labelsize=9)
+        for spine in self.axis.spines.values():
+            spine.set_color("#d8c8b5")
+
+        if self.backend_id == "ble_live":
+            self.title_label.setText("BLE Live Waveform")
+            self.subtitle_label.setText("Recent BLE advertisement power samples will scroll here as a live RSSI waveform.")
+            self.axis.set_title("BLE RSSI timeline", color="#0f766e", fontsize=11, pad=10)
+            self.axis.set_xlabel("Event index", color="#6b7280")
+            self.axis.set_ylabel("RSSI (dBm)", color="#6b7280")
+            self.axis.set_ylim(-105, -20)
+        elif self.backend_id == "rtl_sdr":
+            self.title_label.setText("RF Sweep Waveform")
+            self.subtitle_label.setText("Latest passive sweep profile across configured SDR frequencies will update in place.")
+            self.axis.set_title("Spectrum power profile", color="#c05621", fontsize=11, pad=10)
+            self.axis.set_xlabel("Frequency (MHz)", color="#6b7280")
+            self.axis.set_ylabel("Power (dB)", color="#6b7280")
+        elif self.backend_id == "json_replay":
+            self.title_label.setText("Replay Waveform")
+            self.subtitle_label.setText("Replay sessions render a scrolling envelope from saved capture amplitudes.")
+            self.axis.set_title("Replay signal envelope", color="#7c3aed", fontsize=11, pad=10)
+            self.axis.set_xlabel("Event index", color="#6b7280")
+            self.axis.set_ylabel("Signal (dB)", color="#6b7280")
+            self.axis.set_ylim(-105, -20)
+        else:
+            self.title_label.setText("Playback Waveform")
+            self.subtitle_label.setText("Simulated Ghost District sessions render a live collection envelope from replayed observations.")
+            self.axis.set_title("Playback collection envelope", color="#1471eb", fontsize=11, pad=10)
+            self.axis.set_xlabel("Event index", color="#6b7280")
+            self.axis.set_ylabel("Signal (dB)", color="#6b7280")
+            self.axis.set_ylim(-105, -20)
+
+        self.axis.text(
+            0.5,
+            0.5,
+            "Awaiting capture data",
+            ha="center",
+            va="center",
+            transform=self.axis.transAxes,
+            color="#9aa5b1",
+            fontsize=11,
+        )
+        self.canvas.draw_idle()
+
+    def _render_series(self) -> None:
+        self.axis.clear()
+        self.axis.set_facecolor("#fffaf3")
+        self.axis.grid(alpha=0.20, color="#d9c5ac")
+        self.axis.tick_params(colors="#6b7280", labelsize=9)
+        for spine in self.axis.spines.values():
+            spine.set_color("#d8c8b5")
+
+        xs = np.array(self.history_x, dtype=float)
+        ys = np.array(self.history_y, dtype=float)
+        if xs.size == 0:
+            self._render_idle()
+            return
+
+        if self.backend_id == "ble_live":
+            color = "#0f766e"
+            title = "BLE RSSI timeline"
+        elif self.backend_id == "json_replay":
+            color = "#7c3aed"
+            title = "Replay signal envelope"
+        else:
+            color = "#1471eb"
+            title = "Playback collection envelope"
+
+        if ys.size >= 5:
+            kernel = np.ones(5) / 5.0
+            smooth = np.convolve(ys, kernel, mode="same")
+        else:
+            smooth = ys
+
+        self.axis.plot(xs, ys, color=color, alpha=0.28, linewidth=1.2)
+        self.axis.plot(xs, smooth, color=color, linewidth=2.2)
+        self.axis.fill_between(xs, smooth, np.min([smooth.min() - 4.0, -110.0]), color=color, alpha=0.12)
+        self.axis.scatter(xs[-1:], smooth[-1:], color="#c05621", s=30, zorder=5)
+        self.axis.set_title(title, color=color, fontsize=11, pad=10)
+        self.axis.set_xlabel("Event index", color="#6b7280")
+        self.axis.set_ylabel("Signal (dB)", color="#6b7280")
+        self.axis.set_xlim(max(0.0, xs.min() - 2.0), xs.max() + 2.0)
+        lower = min(-105.0, float(ys.min()) - 6.0)
+        upper = max(-25.0, float(ys.max()) + 6.0)
+        self.axis.set_ylim(lower, upper)
+        self.canvas.draw_idle()
+
+    def _render_sdr(self) -> None:
+        self.axis.clear()
+        self.axis.set_facecolor("#fffaf3")
+        self.axis.grid(alpha=0.20, color="#d9c5ac")
+        self.axis.tick_params(colors="#6b7280", labelsize=9)
+        for spine in self.axis.spines.values():
+            spine.set_color("#d8c8b5")
+
+        if not self.sweep_points:
+            self._render_idle()
+            return
+
+        freqs = np.array(sorted(self.sweep_points), dtype=float)
+        powers = np.array([self.sweep_points[freq] for freq in freqs], dtype=float)
+        self.axis.plot(freqs, powers, color="#c05621", linewidth=2.2)
+        self.axis.fill_between(freqs, powers, np.min([powers.min() - 3.0, -120.0]), color="#f59e0b", alpha=0.18)
+        peak_idx = int(np.argmax(powers))
+        self.axis.scatter([freqs[peak_idx]], [powers[peak_idx]], color="#7c2d12", s=36, zorder=6)
+        self.axis.annotate(
+            f"Peak {freqs[peak_idx]:.1f} MHz",
+            (freqs[peak_idx], powers[peak_idx]),
+            textcoords="offset points",
+            xytext=(8, 8),
+            fontsize=9,
+            color="#7c2d12",
+        )
+        self.axis.set_title("Spectrum power profile", color="#c05621", fontsize=11, pad=10)
+        self.axis.set_xlabel("Frequency (MHz)", color="#6b7280")
+        self.axis.set_ylabel("Power (dB)", color="#6b7280")
+        self.axis.set_xlim(freqs.min() - 0.5, freqs.max() + 0.5)
+        self.axis.set_ylim(float(powers.min()) - 6.0, float(powers.max()) + 6.0)
+        self.canvas.draw_idle()
 
 
 class GhostDistrictCaptureWindow(QMainWindow):
@@ -219,6 +409,7 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.description_label = QLabel("")
         self.description_label.setObjectName("DescriptionText")
         self.description_label.setWordWrap(True)
+        self.waveform_panel = LiveWaveformPanel()
 
         self.event_card = MetricCard("Captured Events", "0", "blue")
         self.output_card = MetricCard("Output Bundle", "Pending", "orange")
@@ -480,6 +671,12 @@ class GhostDistrictCaptureWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
 
+        waveform_shell = QWidget()
+        waveform_layout = QVBoxLayout(waveform_shell)
+        waveform_layout.setContentsMargins(0, 0, 0, 0)
+        waveform_layout.setSpacing(0)
+        waveform_layout.addWidget(self.waveform_panel)
+
         table_shell = QWidget()
         table_layout = QVBoxLayout(table_shell)
         table_layout.setContentsMargins(0, 0, 0, 0)
@@ -498,9 +695,10 @@ class GhostDistrictCaptureWindow(QMainWindow):
         log_layout.addWidget(log_label)
         log_layout.addWidget(self.log_view)
 
+        splitter.addWidget(waveform_shell)
         splitter.addWidget(table_shell)
         splitter.addWidget(log_shell)
-        splitter.setSizes([520, 210])
+        splitter.setSizes([260, 360, 170])
         layout.addWidget(splitter, 1)
         return panel
 
@@ -574,6 +772,7 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.backend_label.setText(backend.display_name)
         self.description_label.setText(backend.description)
         self.backend_card.set_value(backend.display_name)
+        self.waveform_panel.set_backend(backend.backend_id)
         self.start_button.setEnabled(available and self.worker_thread is None)
 
         is_replay = backend.backend_id in {"ghost_playback", "json_replay"}
@@ -627,6 +826,7 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.event_card.set_value("0")
         self.output_card.set_value("Writing pending")
         self.backend_card.set_value(backend.display_name)
+        self.waveform_panel.set_backend(backend.backend_id)
         self.output_hint.setText("Session is active. Capture logs and plots will be generated on completion.")
 
         self.worker_thread = QThread(self)
@@ -671,6 +871,7 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.event_count += 1
         self.metrics_label.setText(f"Events: {self.event_count}")
         self.event_card.set_value(str(self.event_count))
+        self.waveform_panel.ingest_event(event)
         self.events_table.scrollToBottom()
 
     def _append_log(self, message: str) -> None:
@@ -733,3 +934,25 @@ def launch_capture_gui(project_root: Path) -> int:
     window = GhostDistrictCaptureWindow(project_root)
     window.show()
     return app.exec()
+
+
+def _event_strength(event: dict[str, Any]) -> float | None:
+    rssi = event.get("rssi_dbm")
+    if isinstance(rssi, (int, float)):
+        return float(rssi)
+
+    metadata = event.get("metadata", {})
+    score = metadata.get("score")
+    if isinstance(score, (int, float)):
+        return -98.0 + 18.0 * np.log10(max(float(score), 1e-4) * 10.0)
+    return None
+
+
+def _parse_frequency_mhz(value: Any) -> float | None:
+    if not isinstance(value, str):
+        return None
+    text = value.lower().replace("mhz", "").strip()
+    try:
+        return float(text)
+    except ValueError:
+        return None
