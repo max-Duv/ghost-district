@@ -4,6 +4,15 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 from ghost_district import DistrictConfig, GhostDistrictSimulator
+from ghost_district.mission import MissionLogicEngine
+from ghost_district.mission_render import (
+    export_mission_report,
+    export_mission_summary,
+    render_collector_placements,
+    render_interference_actions,
+    render_route_tradeoff,
+    render_state_timeline,
+)
 from ghost_district.render import (
     export_dynamic_state,
     export_fields,
@@ -59,6 +68,14 @@ def main() -> None:
     snapshot_paths = render_snapshots(result, snapshot_hours, output_dir)
     report_path = export_report(summary, output_dir)
 
+    mission_summary = MissionLogicEngine(result).analyze()
+    mission_summary_path = export_mission_summary(mission_summary, output_dir)
+    mission_report_path = export_mission_report(mission_summary, output_dir)
+    placement_plot_path = render_collector_placements(mission_summary, output_dir)
+    route_plot_path = render_route_tradeoff(mission_summary, output_dir)
+    state_plot_path = render_state_timeline(mission_summary, output_dir)
+    action_plot_path = render_interference_actions(mission_summary, output_dir)
+
     print(summary["title"])
     print(f"Summary: {summary_path}")
     print(f"Fields: {field_path}")
@@ -68,6 +85,12 @@ def main() -> None:
     print(f"Collection layout: {collection_layout_path}")
     print(f"Sensor timeline: {sensor_timeline_path}")
     print(f"Report: {report_path}")
+    print(f"Mission summary: {mission_summary_path}")
+    print(f"Mission report: {mission_report_path}")
+    print(f"Placement plot: {placement_plot_path}")
+    print(f"Route tradeoff plot: {route_plot_path}")
+    print(f"State timeline plot: {state_plot_path}")
+    print(f"Interference impact plot: {action_plot_path}")
     if snapshot_paths:
         print("Snapshots:")
         for path in snapshot_paths:

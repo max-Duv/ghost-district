@@ -29,6 +29,8 @@ The generated district can support:
 - `ghost_district/capture.py`: OTA capture backends and event logging
 - `ghost_district/capture_render.py`: OTA capture plot generation
 - `ghost_district/gui.py`: PyQt6 GUI for live/replay capture control
+- `ghost_district/mission.py`: mission logic scoring and inference
+- `ghost_district/mission_render.py`: mission output plots and reports
 - `ghost_district/render.py`: plots and export helpers
 - `captures/`: saved OTA capture logs
 - `outputs/`: generated data products
@@ -66,6 +68,12 @@ Each run writes into `outputs/`:
 - `sensor_observation_timeline.png`: hourly collection volume by sensor
 - `district_snapshot_XX.png`: selected hour snapshots
 - `rf_personality_report.md`: compact narrative report
+- `mission_logic_summary.json`: collector placement, route, emitter, and disruption analysis
+- `mission_logic_report.md`: human-readable mission recommendations
+- `mission_collector_placements.png`: top placement recommendations
+- `mission_route_tradeoff.png`: route opportunity versus exposure
+- `mission_state_timeline.png`: disruption, staging, panic, and covert movement inference
+- `mission_interference_actions.png`: small interference actions ranked by impact
 
 Saved capture sessions write into `captures/` as JSON logs with session metadata plus captured events. Each saved session also writes a sibling `*_plots/` bundle with capture graphics.
 
