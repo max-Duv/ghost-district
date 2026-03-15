@@ -13,6 +13,7 @@ Ghost District builds a synthetic urban block where RF activity reflects habits,
 - daytime versus nighttime RF personality shifts
 - explicit agent trajectories for representative actors
 - fixed and mobile collection sensors with observation logs
+- modular OTA capture backends with a PySide6 operations GUI
 
 The generated district can support:
 
@@ -23,8 +24,12 @@ The generated district can support:
 ## Project Layout
 
 - `run_ghost_district.py`: command-line entry point
+- `launch_capture_gui.py`: PySide6 OTA capture console
 - `ghost_district/model.py`: district geometry, actors, temporal behavior, and RF synthesis
+- `ghost_district/capture.py`: OTA capture backends and event logging
+- `ghost_district/gui.py`: PySide6 GUI for live/replay capture control
 - `ghost_district/render.py`: plots and export helpers
+- `captures/`: saved OTA capture logs
 - `outputs/`: generated data products
 
 ## Quick Start
@@ -41,6 +46,12 @@ Optional parameters:
 python run_ghost_district.py --weather rain --density 1.25 --seed 77 --snapshots 7 12 18 23
 ```
 
+Launch the capture GUI:
+
+```bash
+python launch_capture_gui.py
+```
+
 ## Outputs
 
 Each run writes into `outputs/`:
@@ -54,6 +65,19 @@ Each run writes into `outputs/`:
 - `sensor_observation_timeline.png`: hourly collection volume by sensor
 - `district_snapshot_XX.png`: selected hour snapshots
 - `rf_personality_report.md`: compact narrative report
+
+Saved capture sessions write into `captures/` as JSON logs with session metadata plus captured events.
+
+## OTA Capture Backends
+
+The GUI exposes multiple capture choices:
+
+- `Ghost District Playback`: replays `outputs/ghost_district_sensor_observations.json` as a simulated OTA feed
+- `BLE Adapter`: performs live BLE advertisement capture through `bleak`
+- `RTL-SDR Sweep`: performs a passive power sweep across a configured RF range when `pyrtlsdr` and hardware are available
+- `JSON Replay`: replays any prior capture log or raw observation JSON
+
+The GUI lets you choose the backend, set duration, filter to a specific simulated sensor, configure SDR sweep ranges, and save the resulting event log to disk.
 
 ## Model Notes
 

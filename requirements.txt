@@ -1,0 +1,6 @@
+numpy
+matplotlib
+PySide6
+bleak
+# Optional hardware backend:
+# pyrtlsdr
