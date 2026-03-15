@@ -27,6 +27,7 @@ The generated district can support:
 - `launch_capture_gui.py`: PySide6 OTA capture console
 - `ghost_district/model.py`: district geometry, actors, temporal behavior, and RF synthesis
 - `ghost_district/capture.py`: OTA capture backends and event logging
+- `ghost_district/capture_render.py`: OTA capture plot generation
 - `ghost_district/gui.py`: PySide6 GUI for live/replay capture control
 - `ghost_district/render.py`: plots and export helpers
 - `captures/`: saved OTA capture logs
@@ -66,7 +67,7 @@ Each run writes into `outputs/`:
 - `district_snapshot_XX.png`: selected hour snapshots
 - `rf_personality_report.md`: compact narrative report
 
-Saved capture sessions write into `captures/` as JSON logs with session metadata plus captured events.
+Saved capture sessions write into `captures/` as JSON logs with session metadata plus captured events. Each saved session also writes a sibling `*_plots/` bundle with capture graphics.
 
 ## OTA Capture Backends
 
@@ -78,6 +79,13 @@ The GUI exposes multiple capture choices:
 - `JSON Replay`: replays any prior capture log or raw observation JSON
 
 The GUI lets you choose the backend, set duration, filter to a specific simulated sensor, configure SDR sweep ranges, and save the resulting event log to disk.
+
+Saved OTA sessions automatically render:
+
+- `capture_overview.png`: event cadence and signal-strength distribution
+- `capture_mix.png`: top sources and protocol mix
+- `ble_analysis.png`: BLE RSSI scatter and top service UUIDs, when BLE traffic is present
+- `rf_sweep_heatmap.png`: time-frequency power map, when SDR sweep data is present
 
 ## Model Notes
 

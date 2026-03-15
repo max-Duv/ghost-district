@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from .capture import CaptureBackend, CaptureConfig, build_backend_catalog, save_capture_log
+from .capture_render import render_capture_bundle
 
 
 class CaptureWorker(QObject):
@@ -56,9 +57,14 @@ class CaptureWorker(QObject):
                 lambda: self._stop_requested,
             )
             if self.config.output_path:
-                save_capture_log(self._events, summary, Path(self.config.output_path))
+                output_path = Path(self.config.output_path)
+                save_capture_log(self._events, summary, output_path)
+                plot_paths = render_capture_bundle(self._events, summary, output_path)
+            else:
+                plot_paths = {}
             result = asdict(summary)
             result["events"] = len(self._events)
+            result["plot_paths"] = plot_paths
             self.finished.emit(result)
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -344,6 +350,8 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self._append_log(f"Capture finished with {result.get('event_count', result.get('events', 0))} events")
         if result.get("output_path"):
             self._append_log(f"Saved capture log to {result['output_path']}")
+        for label, path in (result.get("plot_paths") or {}).items():
+            self._append_log(f"Saved {label} plot to {path}")
         self.status_label.setText("Capture complete")
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
