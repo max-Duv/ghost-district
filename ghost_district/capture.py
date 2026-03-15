@@ -76,8 +76,8 @@ def build_backend_catalog(project_root: Path) -> list[CaptureBackend]:
 def save_capture_log(events: list[dict[str, Any]], summary: CaptureSummary, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "summary": asdict(summary),
-        "events": events,
+        "summary": _json_safe(asdict(summary)),
+        "events": _json_safe(events),
     }
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -426,6 +426,22 @@ def _load_observation_list(path: Path) -> list[dict[str, Any]]:
     if isinstance(payload, dict) and "events" in payload:
         return list(payload["events"])
     raise ValueError("Unsupported capture JSON payload.")
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, bytes):
+        return {"encoding": "hex", "value": value.hex()}
+    if isinstance(value, bytearray):
+        return {"encoding": "hex", "value": bytes(value).hex()}
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    return value
 
 
 def _score_to_rssi(score: float) -> float:
