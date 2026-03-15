@@ -9,9 +9,9 @@ from typing import Any
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Qt, Signal
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import (
+from PyQt6.QtCore import QObject, QThread, Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QFont, QImage, QLinearGradient, QPainter, QPixmap, QRadialGradient
+from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
     QDoubleSpinBox,
@@ -40,10 +40,10 @@ from .capture_render import render_capture_bundle
 
 
 class CaptureWorker(QObject):
-    event_emitted = Signal(dict)
-    status_changed = Signal(str)
-    finished = Signal(dict)
-    failed = Signal(str)
+    event_emitted = pyqtSignal(dict)
+    status_changed = pyqtSignal(str)
+    finished = pyqtSignal(dict)
+    failed = pyqtSignal(str)
 
     def __init__(self, backend: CaptureBackend, config: CaptureConfig) -> None:
         super().__init__()
@@ -103,6 +103,60 @@ class MetricCard(QFrame):
         self.value_label.setText(value)
 
 
+class NebulaBackground(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self._noise_tile = self._build_noise_tile()
+
+    def _build_noise_tile(self) -> QPixmap:
+        rng = np.random.default_rng(26)
+        tile = np.zeros((192, 192, 4), dtype=np.uint8)
+        tile[..., 0] = 164
+        tile[..., 1] = 150
+        tile[..., 2] = 255
+        tile[..., 3] = rng.integers(0, 38, size=(192, 192), dtype=np.uint8)
+        image = QImage(tile.data, tile.shape[1], tile.shape[0], tile.strides[0], QImage.Format.Format_RGBA8888)
+        self._noise_array = tile
+        return QPixmap.fromImage(image.copy())
+
+    def paintEvent(self, event: Any) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        base = QLinearGradient(0, 0, self.width(), self.height())
+        base.setColorAt(0.0, QColor("#040816"))
+        base.setColorAt(0.35, QColor("#0a1130"))
+        base.setColorAt(0.7, QColor("#12144a"))
+        base.setColorAt(1.0, QColor("#070b1f"))
+        painter.fillRect(self.rect(), base)
+
+        glows = [
+            ((0.18, 0.16), 0.42, QColor(92, 70, 216, 150)),
+            ((0.82, 0.12), 0.38, QColor(67, 99, 255, 120)),
+            ((0.62, 0.74), 0.44, QColor(111, 58, 174, 140)),
+            ((0.14, 0.84), 0.34, QColor(32, 112, 204, 95)),
+        ]
+        for (x_ratio, y_ratio), radius_ratio, color in glows:
+            gradient = QRadialGradient(
+                self.width() * x_ratio,
+                self.height() * y_ratio,
+                max(self.width(), self.height()) * radius_ratio,
+            )
+            edge = QColor(color)
+            edge.setAlpha(0)
+            gradient.setColorAt(0.0, color)
+            gradient.setColorAt(1.0, edge)
+            painter.fillRect(self.rect(), gradient)
+
+        painter.fillRect(self.rect(), QBrush(self._noise_tile))
+
+        vignette = QLinearGradient(0, 0, 0, self.height())
+        vignette.setColorAt(0.0, QColor(4, 6, 18, 10))
+        vignette.setColorAt(0.5, QColor(4, 6, 18, 0))
+        vignette.setColorAt(1.0, QColor(0, 0, 0, 55))
+        painter.fillRect(self.rect(), vignette)
+
+
 class LiveWaveformPanel(QFrame):
     def __init__(self) -> None:
         super().__init__()
@@ -119,12 +173,12 @@ class LiveWaveformPanel(QFrame):
         layout.setSpacing(8)
 
         self.title_label = QLabel("Live Waveform")
-        self.title_label.setStyleSheet("font-weight: 700; color: #486581;")
+        self.title_label.setStyleSheet("font-weight: 700; color: #d7e0ff;")
         self.subtitle_label = QLabel("")
-        self.subtitle_label.setStyleSheet("color: #7b8794;")
+        self.subtitle_label.setStyleSheet("color: #8f9ad0;")
         self.subtitle_label.setWordWrap(True)
 
-        self.figure = Figure(figsize=(6, 3.1), facecolor="#fffdf8")
+        self.figure = Figure(figsize=(6, 3.1), facecolor="#0a0f26")
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.canvas.setStyleSheet("background: transparent;")
         self.axis = self.figure.add_subplot(111)
@@ -166,38 +220,34 @@ class LiveWaveformPanel(QFrame):
 
     def _render_idle(self) -> None:
         self.axis.clear()
-        self.axis.set_facecolor("#fffaf3")
-        self.axis.grid(alpha=0.20, color="#d9c5ac")
-        self.axis.tick_params(colors="#6b7280", labelsize=9)
-        for spine in self.axis.spines.values():
-            spine.set_color("#d8c8b5")
+        self._style_axis()
 
         if self.backend_id == "ble_live":
             self.title_label.setText("BLE Live Waveform")
             self.subtitle_label.setText("Recent BLE advertisement power samples will scroll here as a live RSSI waveform.")
-            self.axis.set_title("BLE RSSI timeline", color="#0f766e", fontsize=11, pad=10)
-            self.axis.set_xlabel("Event index", color="#6b7280")
-            self.axis.set_ylabel("RSSI (dBm)", color="#6b7280")
+            self.axis.set_title("BLE RSSI timeline", color="#74f0d4", fontsize=11, pad=10)
+            self.axis.set_xlabel("Event index", color="#b9c2ff")
+            self.axis.set_ylabel("RSSI (dBm)", color="#b9c2ff")
             self.axis.set_ylim(-105, -20)
         elif self.backend_id == "rtl_sdr":
             self.title_label.setText("RF Sweep Waveform")
             self.subtitle_label.setText("Latest passive sweep profile across configured SDR frequencies will update in place.")
-            self.axis.set_title("Spectrum power profile", color="#c05621", fontsize=11, pad=10)
-            self.axis.set_xlabel("Frequency (MHz)", color="#6b7280")
-            self.axis.set_ylabel("Power (dB)", color="#6b7280")
+            self.axis.set_title("Spectrum power profile", color="#ff9ad9", fontsize=11, pad=10)
+            self.axis.set_xlabel("Frequency (MHz)", color="#b9c2ff")
+            self.axis.set_ylabel("Power (dB)", color="#b9c2ff")
         elif self.backend_id == "json_replay":
             self.title_label.setText("Replay Waveform")
             self.subtitle_label.setText("Replay sessions render a scrolling envelope from saved capture amplitudes.")
-            self.axis.set_title("Replay signal envelope", color="#7c3aed", fontsize=11, pad=10)
-            self.axis.set_xlabel("Event index", color="#6b7280")
-            self.axis.set_ylabel("Signal (dB)", color="#6b7280")
+            self.axis.set_title("Replay signal envelope", color="#c294ff", fontsize=11, pad=10)
+            self.axis.set_xlabel("Event index", color="#b9c2ff")
+            self.axis.set_ylabel("Signal (dB)", color="#b9c2ff")
             self.axis.set_ylim(-105, -20)
         else:
             self.title_label.setText("Playback Waveform")
             self.subtitle_label.setText("Simulated Ghost District sessions render a live collection envelope from replayed observations.")
-            self.axis.set_title("Playback collection envelope", color="#1471eb", fontsize=11, pad=10)
-            self.axis.set_xlabel("Event index", color="#6b7280")
-            self.axis.set_ylabel("Signal (dB)", color="#6b7280")
+            self.axis.set_title("Playback collection envelope", color="#7db6ff", fontsize=11, pad=10)
+            self.axis.set_xlabel("Event index", color="#b9c2ff")
+            self.axis.set_ylabel("Signal (dB)", color="#b9c2ff")
             self.axis.set_ylim(-105, -20)
 
         self.axis.text(
@@ -207,18 +257,14 @@ class LiveWaveformPanel(QFrame):
             ha="center",
             va="center",
             transform=self.axis.transAxes,
-            color="#9aa5b1",
+            color="#7e89c7",
             fontsize=11,
         )
         self.canvas.draw_idle()
 
     def _render_series(self) -> None:
         self.axis.clear()
-        self.axis.set_facecolor("#fffaf3")
-        self.axis.grid(alpha=0.20, color="#d9c5ac")
-        self.axis.tick_params(colors="#6b7280", labelsize=9)
-        for spine in self.axis.spines.values():
-            spine.set_color("#d8c8b5")
+        self._style_axis()
 
         xs = np.array(self.history_x, dtype=float)
         ys = np.array(self.history_y, dtype=float)
@@ -227,13 +273,13 @@ class LiveWaveformPanel(QFrame):
             return
 
         if self.backend_id == "ble_live":
-            color = "#0f766e"
+            color = "#52e0c4"
             title = "BLE RSSI timeline"
         elif self.backend_id == "json_replay":
-            color = "#7c3aed"
+            color = "#c294ff"
             title = "Replay signal envelope"
         else:
-            color = "#1471eb"
+            color = "#7db6ff"
             title = "Playback collection envelope"
 
         if ys.size >= 5:
@@ -245,10 +291,10 @@ class LiveWaveformPanel(QFrame):
         self.axis.plot(xs, ys, color=color, alpha=0.28, linewidth=1.2)
         self.axis.plot(xs, smooth, color=color, linewidth=2.2)
         self.axis.fill_between(xs, smooth, np.min([smooth.min() - 4.0, -110.0]), color=color, alpha=0.12)
-        self.axis.scatter(xs[-1:], smooth[-1:], color="#c05621", s=30, zorder=5)
+        self.axis.scatter(xs[-1:], smooth[-1:], color="#ff9ad9", s=30, zorder=5)
         self.axis.set_title(title, color=color, fontsize=11, pad=10)
-        self.axis.set_xlabel("Event index", color="#6b7280")
-        self.axis.set_ylabel("Signal (dB)", color="#6b7280")
+        self.axis.set_xlabel("Event index", color="#b9c2ff")
+        self.axis.set_ylabel("Signal (dB)", color="#b9c2ff")
         self.axis.set_xlim(max(0.0, xs.min() - 2.0), xs.max() + 2.0)
         lower = min(-105.0, float(ys.min()) - 6.0)
         upper = max(-25.0, float(ys.max()) + 6.0)
@@ -257,11 +303,7 @@ class LiveWaveformPanel(QFrame):
 
     def _render_sdr(self) -> None:
         self.axis.clear()
-        self.axis.set_facecolor("#fffaf3")
-        self.axis.grid(alpha=0.20, color="#d9c5ac")
-        self.axis.tick_params(colors="#6b7280", labelsize=9)
-        for spine in self.axis.spines.values():
-            spine.set_color("#d8c8b5")
+        self._style_axis()
 
         if not self.sweep_points:
             self._render_idle()
@@ -269,24 +311,32 @@ class LiveWaveformPanel(QFrame):
 
         freqs = np.array(sorted(self.sweep_points), dtype=float)
         powers = np.array([self.sweep_points[freq] for freq in freqs], dtype=float)
-        self.axis.plot(freqs, powers, color="#c05621", linewidth=2.2)
-        self.axis.fill_between(freqs, powers, np.min([powers.min() - 3.0, -120.0]), color="#f59e0b", alpha=0.18)
+        self.axis.plot(freqs, powers, color="#ff9ad9", linewidth=2.2)
+        self.axis.fill_between(freqs, powers, np.min([powers.min() - 3.0, -120.0]), color="#8d6dff", alpha=0.20)
         peak_idx = int(np.argmax(powers))
-        self.axis.scatter([freqs[peak_idx]], [powers[peak_idx]], color="#7c2d12", s=36, zorder=6)
+        self.axis.scatter([freqs[peak_idx]], [powers[peak_idx]], color="#ffd1f5", s=36, zorder=6)
         self.axis.annotate(
             f"Peak {freqs[peak_idx]:.1f} MHz",
             (freqs[peak_idx], powers[peak_idx]),
             textcoords="offset points",
             xytext=(8, 8),
             fontsize=9,
-            color="#7c2d12",
+            color="#ffd1f5",
         )
-        self.axis.set_title("Spectrum power profile", color="#c05621", fontsize=11, pad=10)
-        self.axis.set_xlabel("Frequency (MHz)", color="#6b7280")
-        self.axis.set_ylabel("Power (dB)", color="#6b7280")
+        self.axis.set_title("Spectrum power profile", color="#ff9ad9", fontsize=11, pad=10)
+        self.axis.set_xlabel("Frequency (MHz)", color="#b9c2ff")
+        self.axis.set_ylabel("Power (dB)", color="#b9c2ff")
         self.axis.set_xlim(freqs.min() - 0.5, freqs.max() + 0.5)
         self.axis.set_ylim(float(powers.min()) - 6.0, float(powers.max()) + 6.0)
         self.canvas.draw_idle()
+
+    def _style_axis(self) -> None:
+        self.figure.set_facecolor("#0a0f26")
+        self.axis.set_facecolor("#0f1738")
+        self.axis.grid(alpha=0.18, color="#5b5fa8")
+        self.axis.tick_params(colors="#c5ccff", labelsize=9)
+        for spine in self.axis.spines.values():
+            spine.set_color("#3d4b86")
 
 
 class GhostDistrictCaptureWindow(QMainWindow):
@@ -415,7 +465,7 @@ class GhostDistrictCaptureWindow(QMainWindow):
         self.output_card = MetricCard("Output Bundle", "Pending", "orange")
         self.backend_card = MetricCard("Active Backend", "None", "green")
 
-        central = QWidget()
+        central = NebulaBackground()
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
         root.setContentsMargins(22, 22, 22, 22)
@@ -429,54 +479,57 @@ class GhostDistrictCaptureWindow(QMainWindow):
     def _apply_styles(self) -> None:
         self.setStyleSheet(
             """
-            QMainWindow, QWidget {
-                background: #f6f1e8;
-                color: #1f2933;
+            QMainWindow {
+                background: #040816;
+            }
+            QWidget {
+                color: #edf2ff;
                 font-family: "Segoe UI", "Helvetica Neue", sans-serif;
                 font-size: 11pt;
+                background: transparent;
             }
             QFrame#HeroPanel, QFrame#Panel, QFrame#MetricCard {
-                background: #fffdf8;
-                border: 1px solid #e5d9c8;
+                background: rgba(10, 16, 40, 212);
+                border: 1px solid rgba(131, 121, 255, 90);
                 border-radius: 18px;
             }
             QLabel#HeroTitle {
                 font-size: 24pt;
                 font-weight: 700;
-                color: #102a43;
+                color: #f7f5ff;
             }
             QLabel#HeroSubtitle {
-                color: #486581;
+                color: #aab3ea;
                 font-size: 11.5pt;
             }
             QLabel#SectionTitle {
                 font-size: 14pt;
                 font-weight: 700;
-                color: #7c3e1d;
+                color: #d7b4ff;
             }
             QLabel#DescriptionText {
-                color: #52606d;
+                color: #9ea7d8;
                 line-height: 1.3;
             }
             QLabel#MetricTitle {
-                color: #7b8794;
+                color: #8d99d6;
                 font-size: 9.5pt;
                 font-weight: 600;
                 text-transform: uppercase;
             }
             QLabel#MetricValue {
-                color: #102a43;
+                color: #f7f5ff;
                 font-size: 16pt;
                 font-weight: 700;
             }
             QFrame#MetricCard[accent="blue"] {
-                border-left: 6px solid #1471eb;
+                border-left: 6px solid #6cb5ff;
             }
             QFrame#MetricCard[accent="orange"] {
-                border-left: 6px solid #d97706;
+                border-left: 6px solid #ff9ad9;
             }
             QFrame#MetricCard[accent="green"] {
-                border-left: 6px solid #0f766e;
+                border-left: 6px solid #6ef3da;
             }
             QLabel#StatusBadge {
                 padding: 8px 14px;
@@ -485,71 +538,78 @@ class GhostDistrictCaptureWindow(QMainWindow):
                 min-width: 120px;
             }
             QLabel#StatusBadge[state="idle"] {
-                background: #e9eef5;
-                color: #334e68;
+                background: rgba(138, 152, 255, 50);
+                color: #dfe5ff;
             }
             QLabel#StatusBadge[state="running"] {
-                background: #d9f2e6;
-                color: #0f5132;
+                background: rgba(80, 224, 196, 45);
+                color: #8fffe8;
             }
             QLabel#StatusBadge[state="stopping"] {
-                background: #fff1d6;
-                color: #8a4b08;
+                background: rgba(255, 181, 94, 40);
+                color: #ffd7a3;
             }
             QLabel#StatusBadge[state="failed"] {
-                background: #fde4e1;
-                color: #9b1c1c;
+                background: rgba(255, 97, 132, 45);
+                color: #ffb3c5;
             }
             QLabel#StatusBadge[state="complete"] {
-                background: #dff4ff;
-                color: #0c4a6e;
+                background: rgba(111, 216, 255, 42);
+                color: #bcefff;
             }
             QPushButton {
                 border-radius: 12px;
                 padding: 10px 16px;
                 font-weight: 700;
-                border: 1px solid #d8c8b5;
-                background: #fff9f1;
+                border: 1px solid rgba(143, 128, 255, 90);
+                background: rgba(19, 27, 59, 225);
+                color: #eef1ff;
             }
             QPushButton:hover {
-                background: #fdf2df;
+                background: rgba(30, 39, 84, 235);
             }
             QPushButton#PrimaryButton {
-                background: #c05621;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #3d4cff, stop:1 #8b44d6);
                 color: #fffdf9;
-                border: 1px solid #a34b1b;
+                border: 1px solid rgba(171, 128, 255, 170);
             }
             QPushButton#PrimaryButton:hover {
-                background: #a34b1b;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #5066ff, stop:1 #a653ef);
             }
             QPushButton#SecondaryButton {
-                background: #fff3ed;
-                color: #8b2e10;
-                border: 1px solid #e8b7a3;
+                background: rgba(52, 27, 79, 220);
+                color: #f8d8ff;
+                border: 1px solid rgba(255, 154, 217, 110);
             }
             QPushButton:disabled {
-                background: #efe8df;
-                color: #9aa5b1;
-                border-color: #e0d6c8;
+                background: rgba(20, 25, 48, 180);
+                color: #6c739e;
+                border-color: rgba(83, 90, 133, 70);
             }
             QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTableWidget {
-                background: #fffaf3;
-                border: 1px solid #dccfbe;
+                background: rgba(11, 18, 43, 220);
+                border: 1px solid rgba(94, 103, 171, 90);
                 border-radius: 10px;
                 padding: 8px 10px;
+                color: #eef1ff;
             }
             QComboBox::drop-down {
                 border: none;
                 width: 26px;
             }
+            QComboBox QAbstractItemView {
+                background: rgba(9, 14, 34, 245);
+                color: #eef1ff;
+                selection-background-color: rgba(81, 100, 255, 150);
+            }
             QGroupBox {
-                color: #7c3e1d;
+                color: #d7b4ff;
                 font-weight: 700;
-                border: 1px solid #e5d9c8;
+                border: 1px solid rgba(131, 121, 255, 75);
                 border-radius: 16px;
                 margin-top: 14px;
                 padding-top: 14px;
-                background: #fffdf8;
+                background: rgba(9, 15, 37, 205);
             }
             QGroupBox::title {
                 left: 14px;
@@ -557,21 +617,21 @@ class GhostDistrictCaptureWindow(QMainWindow):
             }
             QTableWidget {
                 gridline-color: transparent;
-                selection-background-color: #f7dcc8;
-                selection-color: #102a43;
-                alternate-background-color: #fff6eb;
+                selection-background-color: rgba(112, 120, 255, 125);
+                selection-color: #f8f9ff;
+                alternate-background-color: rgba(18, 24, 56, 235);
             }
             QHeaderView::section {
-                background: #f4eadf;
-                color: #5c4b3b;
+                background: rgba(19, 26, 63, 235);
+                color: #c5ccff;
                 border: none;
-                border-bottom: 1px solid #e4d5c3;
+                border-bottom: 1px solid rgba(94, 103, 171, 90);
                 padding: 8px;
                 font-weight: 700;
             }
             QPlainTextEdit#LogView {
-                background: #fff7ee;
-                color: #3e4c59;
+                background: rgba(8, 13, 33, 232);
+                color: #d6dcff;
             }
             """
         )
@@ -608,7 +668,7 @@ class GhostDistrictCaptureWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
         label = QLabel("Capture Backend")
-        label.setStyleSheet("font-weight: 700; color: #7c3e1d;")
+        label.setStyleSheet("font-weight: 700; color: #d7b4ff;")
         layout.addWidget(label)
         layout.addWidget(self.backend_combo, 1)
         return widget
@@ -682,7 +742,7 @@ class GhostDistrictCaptureWindow(QMainWindow):
         table_layout.setContentsMargins(0, 0, 0, 0)
         table_layout.setSpacing(8)
         table_label = QLabel("Observed Events")
-        table_label.setStyleSheet("font-weight: 700; color: #486581;")
+        table_label.setStyleSheet("font-weight: 700; color: #b9c2ff;")
         table_layout.addWidget(table_label)
         table_layout.addWidget(self.events_table)
 
@@ -691,7 +751,7 @@ class GhostDistrictCaptureWindow(QMainWindow):
         log_layout.setContentsMargins(0, 0, 0, 0)
         log_layout.setSpacing(8)
         log_label = QLabel("Operator Log")
-        log_label.setStyleSheet("font-weight: 700; color: #486581;")
+        log_label.setStyleSheet("font-weight: 700; color: #b9c2ff;")
         log_layout.addWidget(log_label)
         log_layout.addWidget(self.log_view)
 
@@ -756,10 +816,10 @@ class GhostDistrictCaptureWindow(QMainWindow):
         layout.setSpacing(10)
 
         self.metrics_label = QLabel("Events: 0")
-        self.metrics_label.setStyleSheet("font-weight: 700; color: #102a43;")
+        self.metrics_label.setStyleSheet("font-weight: 700; color: #eef1ff;")
         self.output_hint = QLabel("Plots and capture logs will be written when a session completes.")
         self.output_hint.setWordWrap(True)
-        self.output_hint.setStyleSheet("color: #52606d;")
+        self.output_hint.setStyleSheet("color: #9ea7d8;")
 
         layout.addWidget(self.metrics_label)
         layout.addWidget(self.output_hint)

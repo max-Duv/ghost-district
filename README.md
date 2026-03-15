@@ -13,7 +13,7 @@ Ghost District builds a synthetic urban block where RF activity reflects habits,
 - daytime versus nighttime RF personality shifts
 - explicit agent trajectories for representative actors
 - fixed and mobile collection sensors with observation logs
-- modular OTA capture backends with a PySide6 operations GUI
+- modular OTA capture backends with a PyQt6 operations GUI
 
 The generated district can support:
 
@@ -24,11 +24,11 @@ The generated district can support:
 ## Project Layout
 
 - `run_ghost_district.py`: command-line entry point
-- `launch_capture_gui.py`: PySide6 OTA capture console
+- `launch_capture_gui.py`: PyQt6 OTA capture console
 - `ghost_district/model.py`: district geometry, actors, temporal behavior, and RF synthesis
 - `ghost_district/capture.py`: OTA capture backends and event logging
 - `ghost_district/capture_render.py`: OTA capture plot generation
-- `ghost_district/gui.py`: PySide6 GUI for live/replay capture control
+- `ghost_district/gui.py`: PyQt6 GUI for live/replay capture control
 - `ghost_district/render.py`: plots and export helpers
 - `captures/`: saved OTA capture logs
 - `outputs/`: generated data products
